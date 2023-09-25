@@ -21,6 +21,11 @@ iops_val=${iops_val:-3000}
 read -e -p "Would you like to modify all gp2 volumes to gp3 with IOPS value ${iops_val}? (y/n) " modify
 if [ "${modify}" == "y" ] || [ "${modify}" == "Y" ]; then 
   gp2_volumes=$(aws --profile ${profile} ec2 describe-volumes --filters Name=volume-type,Values=gp2 | jq -r '.[][].VolumeId')
+#   original_iops=$(aws --profile ${profile} ec2 describe-volumes --volume-ids "$v"| jq -r '.[][].Iops')
+#   if [ "$original_iops" -gt 3000 ]; then
+#     iops_val=$original_iops
+#   fi
+#   echo $iops_val
   for v in $gp2_volumes; do
     aws --profile ${profile} ec2 modify-volume --volume-id "$v" --volume-type gp3 --iops ${iops_val}
   done
