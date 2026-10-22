@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Test stub for the aws CLI. Logs the call and replays a fixture.
+printf '%s\n' "$*" >> "${AWS_STUB_LOG:-/dev/null}"
+
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile|--region|--output|--query) shift 2 || shift ;;
+    --no-cli-pager) shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+
+key="${args[0]-}_${args[1]-}"
+if [ -f "$AWS_STUB_FIXTURES/$key.sh" ]; then
+  exec bash "$AWS_STUB_FIXTURES/$key.sh" ${args[@]+"${args[@]}"}
+elif [ -f "$AWS_STUB_FIXTURES/$key.json" ]; then
+  cat "$AWS_STUB_FIXTURES/$key.json"
+fi
+exit 0
