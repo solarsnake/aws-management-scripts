@@ -36,3 +36,12 @@ esac'
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == BUCKET* ]]
 }
+
+@test "stderr warning on a successful bucket does not break the report" {
+  fixture s3api_list-buckets '{"Buckets":[{"Name":"warn-b"},{"Name":"sse-b"}]}'
+  fixture_script s3api_get-bucket-encryption 'echo "warning: deprecated thing" >&2; echo "{\"ServerSideEncryptionConfiguration\":{\"Rules\":[{\"ApplyServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]}}"'
+  run bash -c "'$S' 2>/dev/null"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ warn-b\ +AES256 ]]
+  [[ "$output" =~ sse-b\ +AES256 ]]
+}

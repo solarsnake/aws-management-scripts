@@ -43,3 +43,39 @@ S="$BATS_TEST_DIRNAME/../ec2/delete-list-of-amis.sh"
   [[ "$output" != *"[y/N]"* ]]
   refute_called ec2 deregister-image
 }
+
+@test "describe-images stderr noise does not hide snapshots" {
+  fixture_script ec2_describe-images 'echo "warning: something odd" >&2; echo "{\"Images\":[{\"BlockDeviceMappings\":[{\"Ebs\":{\"SnapshotId\":\"snap-0000000a\"}}]}]}"'
+  run "$S" --yes --delete-snapshots --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 0 ]
+  assert_called ec2 deregister-image --image-id\ ami-00000001
+  assert_called ec2 delete-snapshot --snapshot-id\ snap-0000000a
+}
+
+@test "failed describe-images skips deregister and exits 1" {
+  fixture_script ec2_describe-images 'echo "An error occurred (InvalidAMIID.NotFound)" >&2; exit 1'
+  run "$S" --yes --delete-snapshots --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 1 ]
+  refute_called ec2 deregister-image
+  [[ "$output" == *"Failed: ami-00000001: "*InvalidAMIID.NotFound* ]]
+}
+
+@test "unparseable describe-images output skips deregister and exits 1" {
+  fixture_script ec2_describe-images 'echo "not json"'
+  run "$S" --yes --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 1 ]
+  refute_called ec2 deregister-image
+}
+
+@test "--dry-run deregisters nothing" {
+  run "$S" --dry-run --delete-snapshots --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 0 ]
+  refute_called ec2 deregister-image
+  refute_called ec2 delete-snapshot
+}
+
+@test "answering no deregisters nothing and exits 1" {
+  run bash -c "echo n | '$S' --file '$BATS_TEST_TMPDIR/ids.txt'"
+  [ "$status" -eq 1 ]
+  refute_called ec2 deregister-image
+}

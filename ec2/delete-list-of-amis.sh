@@ -54,15 +54,21 @@ else
 fi
 confirm "Continue?" || die "Aborted. Nothing was changed."
 
+errf=""
+make_temp errf
 ok=0
 failed=0
 for id in $ids; do
-  if ! desc=$(aws_ro ec2 describe-images --image-ids "$id" 2>&1); then
+  if ! desc=$(aws_ro ec2 describe-images --image-ids "$id" 2>"$errf"); then
     failed=$((failed + 1))
-    log "Failed: $id: $desc"
+    log "Failed: $id: $(cat "$errf")"
     continue
   fi
-  snaps=$(printf '%s' "$desc" | jq -r '.Images[0].BlockDeviceMappings[]?.Ebs.SnapshotId? // empty') || snaps=""
+  if ! snaps=$(printf '%s' "$desc" | jq -r '.Images[0].BlockDeviceMappings[]?.Ebs.SnapshotId? // empty' 2>"$errf"); then
+    failed=$((failed + 1))
+    log "Failed: $id: could not parse describe-images output: $(cat "$errf")"
+    continue
+  fi
 
   if ! out=$(aws_rw ec2 deregister-image --image-id "$id" 2>&1); then
     failed=$((failed + 1))

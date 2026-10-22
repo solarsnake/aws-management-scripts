@@ -40,20 +40,29 @@ buckets=$(aws_ro s3api list-buckets | jq -r '.Buckets[]?.Name') || die "could no
 
 rows=""
 make_temp rows
+errf=""
+make_temp errf
 for b in $buckets; do
-  if out=$(aws_ro s3api get-bucket-encryption --bucket "$b" 2>&1); then
-    printf '%s' "$out" | jq -r --arg b "$b" '
+  if out=$(aws_ro s3api get-bucket-encryption --bucket "$b" 2>"$errf"); then
+    if row=$(printf '%s' "$out" | jq -r --arg b "$b" '
       .ServerSideEncryptionConfiguration.Rules[0] as $r
       | [$b, $r.ApplyServerSideEncryptionByDefault.SSEAlgorithm,
          ($r.ApplyServerSideEncryptionByDefault.KMSMasterKeyID // "-"),
-         ($r.BucketKeyEnabled // false | tostring), "-"] | @tsv' >> "$rows"
-  elif [[ $out == *ServerSideEncryptionConfigurationNotFoundError* ]]; then
-    printf '%s\tnone\t-\t-\t-\n' "$b" >> "$rows"
+         ($r.BucketKeyEnabled // false | tostring), "-"] | @tsv' 2>/dev/null); then
+      printf '%s\n' "$row" >> "$rows"
+    else
+      printf '%s\terror\t-\t-\tunknown\n' "$b" >> "$rows"
+    fi
   else
-    code=unknown
-    err_re='\(([^)]+)\)'
-    if [[ $out =~ $err_re ]]; then code=${BASH_REMATCH[1]}; fi
-    printf '%s\terror\t-\t-\t%s\n' "$b" "$code" >> "$rows"
+    out=$(cat "$errf")
+    if [[ $out == *ServerSideEncryptionConfigurationNotFoundError* ]]; then
+      printf '%s\tnone\t-\t-\t-\n' "$b" >> "$rows"
+    else
+      code=unknown
+      err_re='\(([^)]+)\)'
+      if [[ $out =~ $err_re ]]; then code=${BASH_REMATCH[1]}; fi
+      printf '%s\terror\t-\t-\t%s\n' "$b" "$code" >> "$rows"
+    fi
   fi
 done
 
