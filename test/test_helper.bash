@@ -17,8 +17,10 @@ fixture() { printf '%s\n' "$2" > "$AWS_STUB_FIXTURES/$1.json"; }
 fixture_script() { printf '%s\n' "$2" > "$AWS_STUB_FIXTURES/$1.sh"; }
 
 call_count() {
-  local n
-  n=$(grep -c -- "^$1 $2" "$AWS_STUB_LOG" || true)
+  local n=0 line
+  while IFS= read -r line; do
+    case "$line" in "$1 $2" | "$1 $2 "*) n=$((n + 1)) ;; esac
+  done < "$AWS_STUB_LOG"
   printf '%s\n' "$n"
 }
 
