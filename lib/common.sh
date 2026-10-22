@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Shared helpers for the AWS management scripts. Source this file; do not run it.
-# shellcheck disable=SC2034 # COMMON_SHIFT is read by the scripts that source this file
 
 PROFILE=""
 REGION=""
@@ -25,6 +24,7 @@ usage_error() {
 
 # Handle --profile, --region, --dry-run and --yes. Sets COMMON_SHIFT to the
 # number of arguments consumed (0 when ARG is not a common flag).
+# shellcheck disable=SC2034 # COMMON_SHIFT is read by the scripts that source this file
 common_flag() {
   COMMON_SHIFT=0
   case "${1-}" in
@@ -111,10 +111,14 @@ _common_cleanup() {
     rm -f "$f"
   done
 }
+# Sourcing scripts must not set their own EXIT trap; it would replace this one
+# and leak the temp files.
 trap _common_cleanup EXIT
 
 # read_id_list FILE PATTERN: print the IDs in FILE (or stdin for -), one per
 # line. Ignores CR, blank lines and # comments; rejects IDs not matching PATTERN.
+# Callers must capture the output first (ids=$(read_id_list ...)) so that a bad
+# line exits 2 before any AWS call is made.
 read_id_list() {
   local file=$1 pattern=$2 line n=0
   if [ "$file" = "-" ]; then
@@ -136,6 +140,7 @@ read_id_list() {
 # gp3_iops SOURCE_IOPS MIN_IOPS: min(16000, max(MIN_IOPS, SOURCE_IOPS)).
 gp3_iops() {
   local v=$1
+  case "$v" in '' | *[!0-9]*) v=0 ;; esac
   if [ "$v" -lt "$2" ]; then v=$2; fi
   if [ "$v" -gt 16000 ]; then v=16000; fi
   printf '%s\n' "$v"

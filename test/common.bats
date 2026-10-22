@@ -68,11 +68,48 @@ setup() {
   [[ "$output" == *"Account: 123456789012  Region: us-east-1  Profile: default"* ]]
 }
 
+# Build a PATH dir holding only the named tools (plus the stub aws if wanted).
+make_tool_dir() {
+  local with_aws=$1 t src
+  TOOLS="$BATS_TEST_TMPDIR/tools"
+  mkdir -p "$TOOLS"
+  for t in bash env basename mktemp rm cat jq; do
+    src=$(command -v "$t") || continue
+    ln -sf "$src" "$TOOLS/$t"
+  done
+  if [ "$with_aws" = 1 ]; then ln -sf "$BATS_TEST_DIRNAME/bin/aws" "$TOOLS/aws"; fi
+}
+
 @test "preflight fails without jq" {
-  if [ -x /usr/bin/jq ]; then skip "jq is in /usr/bin"; fi
-  run env PATH="$BATS_TEST_DIRNAME/bin:/usr/bin:/bin" /bin/bash -c '. "$LIB"; preflight'
+  make_tool_dir 1
+  rm_jq="$TOOLS/jq"
+  unlink "$rm_jq"
+  run env PATH="$TOOLS" "$TOOLS/bash" -c '. "$LIB"; preflight'
   [ "$status" -eq 1 ]
+  [[ "$output" == *"jq not found"* ]]
   [[ "$output" == *"https://jqlang.org/download/"* ]]
+}
+
+@test "preflight fails without aws" {
+  make_tool_dir 0
+  run env PATH="$TOOLS" "$TOOLS/bash" -c '. "$LIB"; preflight'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"aws CLI not found"* ]]
+  [[ "$output" == *"https://aws.amazon.com/cli/"* ]]
+}
+
+@test "library works under set -euo pipefail with empty profile and region" {
+  run bash -c 'set -euo pipefail; . "$LIB"; aws_ro sts get-caller-identity >/dev/null; make_temp T; [ -f "$T" ]; echo ok'
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+  assert_called sts get-caller-identity "--output json"
+}
+
+@test "assert_called matches the operation exactly" {
+  printf 'ec2 create-tags --resources x\n' > "$AWS_STUB_LOG"
+  run refute_called ec2 create-tag
+  [ "$status" -eq 0 ]
+  assert_called ec2 create-tags
 }
 
 @test "require_region dies when unset" {
@@ -97,9 +134,9 @@ setup() {
 }
 
 @test "gp3_iops floors at min and caps at 16000" {
-  run bash -c '. "$LIB"; gp3_iops 100 3000; gp3_iops 4500 3000; gp3_iops 3000 6000; gp3_iops 20000 3000'
+  run bash -c '. "$LIB"; gp3_iops 100 3000; gp3_iops 4500 3000; gp3_iops 3000 6000; gp3_iops 20000 3000; gp3_iops null 3000; gp3_iops "" 3000'
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf '3000\n4500\n6000\n16000')" ]
+  [ "$output" = "$(printf '3000\n4500\n6000\n16000\n3000\n3000')" ]
 }
 
 @test "copyable_tags_json drops aws: keys and handles null" {

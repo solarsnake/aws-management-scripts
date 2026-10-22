@@ -26,7 +26,7 @@ _matching_calls() {
   local service=$1 op=$2 line s ok
   shift 2
   while IFS= read -r line; do
-    case "$line" in "$service $op"*) ;; *) continue ;; esac
+    case "$line" in "$service $op" | "$service $op "*) ;; *) continue ;; esac
     ok=1
     for s in "$@"; do
       case "$line" in *"$s"*) ;; *) ok=0 ;; esac

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # Test stub for the aws CLI. Logs the call and replays a fixture.
 printf '%s\n' "$*" >> "${AWS_STUB_LOG:-/dev/null}"
 
