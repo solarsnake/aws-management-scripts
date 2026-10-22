@@ -8,6 +8,10 @@ ASSUME_YES=0
 COMMON_SHIFT=0
 _COMMON_TEMP_FILES=()
 
+# fd 4 keeps the script's original stderr, so progress still shows when a
+# caller redirects a helper's stderr to a file.
+exec 4>&2
+
 log() { printf '%s\n' "$*" >&2; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() {
@@ -164,7 +168,7 @@ gp3_default_throughput() {
 # aws_wait ARGS...: run "aws ec2 wait ARGS...". The CLI waiters give up after
 # about 10 minutes, so retry on "Max attempts exceeded" for up to WAIT_ROUNDS
 # rounds (default 12, about 2 hours). Any other failure returns at once.
-# Failures print the last stderr.
+# Failures print the last stderr. Progress goes to fd 4, the original stderr.
 aws_wait() {
   local rounds=${WAIT_ROUNDS:-12} round=1 waiterr="" werr
   make_temp werr
@@ -179,7 +183,7 @@ aws_wait() {
       printf '%s\n' "$waiterr" >&2
       return 1
     fi
-    log "Still waiting..."
+    log "Still waiting..." 2>&4
     round=$((round + 1))
   done
 }

@@ -51,7 +51,7 @@ backup:DeleteRecoveryPoint
 ```
 ### ec2/delete-list-of-amis.sh
 
-Deregisters every AMI in a file, one ID per line, and prints the snapshots left behind. Blank lines and `#` comments are ignored, and the whole list is validated before any AWS call. Its own flags are `--file FILE|-` (required; `-` reads stdin and then needs `--yes` or `--dry-run`) and `--delete-snapshots`.  
+Deregisters every AMI in a file, one ID per line. With `--delete-snapshots` it also deletes the snapshots behind each AMI; without it, it prints the snapshots left behind. Blank lines and `#` comments are ignored, and the whole list is validated before any AWS call. Its own flags are `--file FILE|-` (required; `-` reads stdin and then needs `--yes` or `--dry-run`) and `--delete-snapshots`.  
 IAM actions:
 ```
 sts:GetCallerIdentity
@@ -125,6 +125,8 @@ VOLUME                 SIZE GiB  GP2 IOPS  GP3 IOPS  THROUGHPUT
 vol-0a1b2c3d4e5f60001       100       300      3000         125
 vol-0a1b2c3d4e5f60002       500      1500      3000         250
 About to convert 2 volume(s) to gp3.
+[dry-run] aws ec2 modify-volume --volume-id vol-0a1b2c3d4e5f60001 --volume-type gp3 --iops 3000 --throughput 125
+[dry-run] aws ec2 modify-volume --volume-id vol-0a1b2c3d4e5f60002 --volume-type gp3 --iops 3000 --throughput 250
 Dry run: 2 volume(s) would be modified.
 ```  
 IAM actions:

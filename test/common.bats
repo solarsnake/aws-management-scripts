@@ -168,6 +168,13 @@ if [ \$n -le $1 ]; then echo 'Waiter SnapshotCompleted failed: Max attempts exce
   [ "$(call_count ec2 wait)" -eq 2 ]
 }
 
+@test "aws_wait progress shows even when the caller captures stderr" {
+  timeout_wait_fixture 1
+  run bash -c '. "$LIB"; aws_wait snapshot-completed --snapshot-ids snap-1 2>/dev/null'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Still waiting..."* ]]
+}
+
 @test "aws_wait gives up after WAIT_ROUNDS rounds" {
   timeout_wait_fixture 100
   run bash -c '. "$LIB"; WAIT_ROUNDS=3 aws_wait snapshot-completed --snapshot-ids snap-1'
