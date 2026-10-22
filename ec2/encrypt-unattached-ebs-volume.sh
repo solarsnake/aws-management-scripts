@@ -62,7 +62,8 @@ fi
 if ! info=$(printf '%s' "$vol_json" | jq -c '.Volumes[0] | select(. != null)
   | {state: .State, encrypted: (.Encrypted // false), type: .VolumeType, iops: .Iops,
      throughput: .Throughput, az: .AvailabilityZone, tags: (.Tags // [])}' 2>"$errf") || [ -z "$info" ]; then
-  die "could not read $VOLUME_ID from describe-volumes output: $(cat "$errf")"
+  if [ -s "$errf" ]; then die "could not read $VOLUME_ID from describe-volumes output: $(cat "$errf")"; fi
+  die "$VOLUME_ID was not found in the describe-volumes output"
 fi
 
 field() { printf '%s' "$info" | jq -r "$1"; }
@@ -82,6 +83,9 @@ target=${TYPE:-$src_type}
 extra=()
 case "$target" in
   gp3)
+    if [ -n "$src_iops" ] && [ "$src_iops" -gt 16000 ]; then
+      warn "$VOLUME_ID has $src_iops IOPS; gp3 supports at most 16000"
+    fi
     extra+=(--iops "$(gp3_iops "${src_iops:-3000}" 3000)")
     if [ "$src_type" = "gp3" ] && [ -n "$src_throughput" ]; then
       extra+=(--throughput "$src_throughput")
@@ -145,7 +149,7 @@ if ! out=$(aws_rw ec2 create-volume --availability-zone "$az" --snapshot-id "$sn
   fail_after_snapshot "could not create the encrypted volume: $(cat "$errf")"
 fi
 if ! new=$(printf '%s' "$out" | jq -r '.VolumeId // empty' 2>"$errf") || [ -z "$new" ]; then
-  fail_after_snapshot "no volume ID in create-volume output: $(cat "$errf")"
+  fail_after_snapshot "no volume ID in create-volume output, so a volume may have been created; check for a volume tagged encrypted-copy-of=$VOLUME_ID: $(cat "$errf")"
 fi
 if ! aws_ro ec2 wait volume-available --volume-ids "$new" >/dev/null 2>"$errf"; then
   fail_after_snapshot "new volume $new did not become available: $(cat "$errf")"

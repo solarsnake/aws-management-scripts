@@ -11,7 +11,7 @@ S="$BATS_TEST_DIRNAME/../ec2/modify-ebs-volumes-gp2-to-gp3.sh"
   run "$S" --yes
   [ "$status" -eq 0 ]
   assert_called ec2 describe-volumes --filters\ Name=volume-type,Values=gp2
-  assert_called ec2 modify-volume --volume-id\ vol-0000000a --volume-type\ gp3 --iops\ 6000 --throughput\ 125
+  assert_called ec2 modify-volume --volume-id\ vol-0000000a --volume-type\ gp3 --iops\ 6000 --throughput\ 250
   assert_called ec2 modify-volume --volume-id\ vol-0000000b --volume-type\ gp3 --iops\ 3000 --throughput\ 125
   [[ "$output" == *"Done: 2 succeeded, 0 failed"* ]]
 }
@@ -83,7 +83,7 @@ S="$BATS_TEST_DIRNAME/../ec2/modify-ebs-volumes-gp2-to-gp3.sh"
   [[ "$output" =~ VOLUME\ +SIZE\ GiB\ +GP2\ IOPS\ +GP3\ IOPS\ +THROUGHPUT ]]
   local row
   row=$(printf '%s\n' "$output" | grep '^vol-0000000a')
-  [[ "$row" =~ ^vol-0000000a\ +2000\ +6000\ +6000\ +125$ ]]
+  [[ "$row" =~ ^vol-0000000a\ +2000\ +6000\ +6000\ +250$ ]]
   row=$(printf '%s\n' "$output" | grep '^vol-0000000b')
   [[ "$row" =~ ^vol-0000000b\ +100\ +300\ +3000\ +125$ ]]
 }
@@ -125,4 +125,48 @@ S="$BATS_TEST_DIRNAME/../ec2/modify-ebs-volumes-gp2-to-gp3.sh"
   [ "$(call_count ec2 modify-volume)" -eq 2 ]
   [[ "$output" == *"Failed: vol-0000000a: "*VolumeModificationRateExceeded* ]]
   [[ "$output" == *"Done: 1 succeeded, 1 failed"* ]]
+}
+
+@test "default throughput is 125 for small volumes and 250 for large ones" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","Size":500,"Iops":1500,"VolumeType":"gp2"},{"VolumeId":"vol-0000000b","Size":100,"Iops":300,"VolumeType":"gp2"},{"VolumeId":"vol-0000000c","Size":170,"Iops":510,"VolumeType":"gp2"}]}'
+  run "$S" --yes
+  [ "$status" -eq 0 ]
+  assert_called ec2 modify-volume --volume-id\ vol-0000000a --throughput\ 250
+  assert_called ec2 modify-volume --volume-id\ vol-0000000b --throughput\ 125
+  assert_called ec2 modify-volume --volume-id\ vol-0000000c --throughput\ 125
+}
+
+@test "--throughput 500 applies to every volume" {
+  run "$S" --yes --min-iops 3000 --throughput 500
+  [ "$status" -eq 0 ]
+  assert_called ec2 modify-volume --volume-id\ vol-0000000a --throughput\ 500
+  assert_called ec2 modify-volume --volume-id\ vol-0000000b --throughput\ 500
+}
+
+@test "--throughput only raises: 200 gives 200 small and 250 large" {
+  run "$S" --yes --throughput 200
+  [ "$status" -eq 0 ]
+  assert_called ec2 modify-volume --volume-id\ vol-0000000a --throughput\ 250
+  assert_called ec2 modify-volume --volume-id\ vol-0000000b --throughput\ 200
+}
+
+@test "plan table shows per-volume throughput" {
+  run bash -c "'$S' --yes --throughput 200 2>/dev/null"
+  [[ "$(printf '%s\n' "$output" | grep '^vol-0000000a')" =~ \ 250$ ]]
+  [[ "$(printf '%s\n' "$output" | grep '^vol-0000000b')" =~ \ 200$ ]]
+}
+
+@test "gp3 iops is capped at 16000" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","Size":6000,"Iops":18000,"VolumeType":"gp2"}]}'
+  run "$S" --yes
+  [ "$status" -eq 0 ]
+  assert_called ec2 modify-volume --volume-id\ vol-0000000a --iops\ 16000
+}
+
+@test "non-JSON modifications response exits 1 before any modify" {
+  fixture_script ec2_describe-volumes-modifications 'echo "not json"'
+  run "$S" --yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"error:"* ]]
+  refute_called ec2 modify-volume
 }

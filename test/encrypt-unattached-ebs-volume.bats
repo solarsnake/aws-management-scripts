@@ -207,3 +207,46 @@ create_line() { grep '^ec2 create-volume' "$AWS_STUB_LOG"; }
   [ "$status" -eq 1 ]
   refute_called ec2 create-snapshot
 }
+
+@test "--type gp3 warns when source iops exceed 16000" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","State":"available","Encrypted":false,"VolumeType":"io2","Iops":20000,"AvailabilityZone":"us-east-1a"}]}'
+  run "$S" --yes --volume-id $V --kms-key alias/k --type gp3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: $V has 20000 IOPS; gp3 supports at most 16000"* ]]
+  assert_called ec2 create-volume --volume-type\ gp3 --iops\ 16000
+}
+
+@test "create-snapshot output without SnapshotId exits 1" {
+  fixture ec2_create-snapshot '{}'
+  run "$S" --yes --volume-id $V --kms-key alias/k
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"error:"* ]]
+  refute_called ec2 create-volume
+  refute_called ec2 delete-volume
+}
+
+@test "create-volume output without VolumeId cleans up and warns" {
+  fixture ec2_create-volume '{}'
+  run "$S" --yes --delete-source --volume-id $V --kms-key alias/k
+  [ "$status" -eq 1 ]
+  refute_called ec2 delete-volume
+  assert_called ec2 delete-snapshot --snapshot-id\ snap-0000beef
+  [[ "$output" == *"a volume may have been created"* ]]
+  [[ "$output" == *"encrypted-copy-of=$V"* ]]
+}
+
+@test "describe with no volumes exits 1" {
+  fixture ec2_describe-volumes '{"Volumes":[]}'
+  run "$S" --yes --volume-id $V --kms-key alias/k
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"error: $V was not found"* ]]
+  refute_called ec2 create-snapshot
+}
+
+@test "io1 source without Iops is refused before any mutation" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","State":"available","Encrypted":false,"VolumeType":"io1","AvailabilityZone":"us-east-1a"}]}'
+  run "$S" --yes --volume-id $V --kms-key alias/k
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"error:"*"no provisioned IOPS"* ]]
+  refute_called ec2 create-snapshot
+}
