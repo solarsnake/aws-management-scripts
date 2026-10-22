@@ -1,60 +1,151 @@
-#!/bin/sh
-# 
-# This script will encrypt all AMIs in your account that are NOT created via AWS Backup. You will need to clean up snaphshots on your own.
-#
+#!/usr/bin/env bash
+# Create encrypted copies of the unencrypted AMIs you own, optionally removing the originals.
+set -euo pipefail
+# shellcheck source=lib/common.sh
+. "$(dirname "$0")/../lib/common.sh"
 
-read -e -p "Give me your AWS CLI profile name: " profile_name
-read -e -p "What AWS Region are we in? (us-west-1, us-gov-west-1, etc) " aws_region
-read -e -p "Give me your KMS key alias (alias/SOME_VALUE): " kms_key
+usage() {
+  cat <<'USAGE'
+Usage: encrypt-all-amis.sh --kms-key KEY [--delete-source] [options]
 
-images=$(aws --profile ${profile_name} ec2 describe-images --owner self --filters Name=block-device-mapping.encrypted,Values=false --query 'Images[?!not_null(Tags[?Key == `aws:backup:source-resource`])]' |jq -r '.[].ImageId')
-count=$(echo "${images}" |wc -l)
+Copy every AMI you own that has unencrypted snapshots into an encrypted AMI
+using KEY (a key ID, ARN or alias such as alias/my-key). The copy is named
+"<name>-encrypted", shortened if needed to fit the 128 character limit.
+AMIs created by AWS Backup are skipped. Tags are copied, except those starting
+with aws:.
 
-echo "${images}" >> "${profile_name}"-amis.txt
+Options:
+  --kms-key KEY     KMS key to encrypt with (required)
+  --delete-source   Deregister each original AMI and delete its snapshots once
+                    the copy is available and tagged
+  --report FILE     Write one "<old-id> <new-id>" line per copied AMI to FILE
+  --profile NAME    AWS CLI profile
+  --region NAME     AWS region
+  --dry-run         Show what would be done without changing anything
+  --yes             Do not ask for confirmation
+  -h, --help        Show this help
+USAGE
+}
 
-echo "You have ${count} unencrypted AMIs in this account"
+KMS_KEY=""
+DELETE_SOURCE=0
+REPORT=""
+while [ $# -gt 0 ]; do
+  common_flag "$1" "${2-}"
+  if [ "$COMMON_SHIFT" -gt 0 ]; then shift "$COMMON_SHIFT"; continue; fi
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --kms-key) [ $# -ge 2 ] || usage_error "--kms-key requires a value"; KMS_KEY=$2; shift 2 ;;
+    --report) [ $# -ge 2 ] || usage_error "--report requires a value"; REPORT=$2; shift 2 ;;
+    --delete-source) DELETE_SOURCE=1; shift ;;
+    *) usage_error "unknown option: $1" ;;
+  esac
+done
+[ -n "$KMS_KEY" ] || usage_error "--kms-key is required"
 
-read -e -p "Do you want to see your unencrypted AMIs? (y/n) " wanna_see
-if [ "${wanna_see}" == "y" ] || [ "${wanna_see}" == "Y" ]; then 
-  aws --profile "${profile_name}" ec2 describe-images --owner self --filters Name=block-device-mapping.encrypted,Values=false --query 'Images[?!not_null(Tags[?Key == `aws:backup:source-resource`])].{id:ImageId,tag:Tags}' --output yaml
-elif [ "${wanna_see}" == "n" ] || [ "${wanna_see}" == "N" ]; then
-  echo "Ok"
-else
-  echo "Invalid Response"
-  exit 1
+preflight
+REGION_EFF=$(require_region)
+
+errf=""
+make_temp errf
+
+if ! images_json=$(aws_ro ec2 describe-images --owners self --filters Name=block-device-mapping.encrypted,Values=false 2>"$errf"); then
+  die "could not list AMIs: $(cat "$errf")"
 fi
 
-read -e -p "Would you like to encrypt all unencrypted AMIs in this account (this will take some time)? (y/n) " encrypt_all
-if [ "${encrypt_all}" == "y" ] || [ "${encrypt_all}" == "Y" ]; then 
-    for i in $images; do
-        source_image_name=$(aws --profile ${profile_name} ec2 describe-images --image-ids ${i} --query 'Images[].Name' |jq -r '.[]')
-        new_image=$(aws --profile "${profile_name}" ec2 copy-image --name "${source_image_name}" --source-region "${aws_region}" --source-image-id "${i}" --encrypted --kms-key-id "${kms_key}" | jq -r '.ImageId')
-        aws --profile "${profile_name}" ec2 wait image-available --image-ids "${new_image}"
-        aws --profile "${profile_name}" ec2 describe-tags --filters "Name=resource-id,Values=${i}"| sed '/Resource/d' > tags.json | true
-        aws --profile "${profile_name}" ec2 create-tags --resources "${new_image}" --cli-input-json file://tags.json | true
-        rm tags.json | true
-        echo "You have created an encrypted AMI ${new_image} from the unencrypted AMI ${i}"
-    done
-elif [ "${encrypt_all}" == "n" ] || [ "${encrypt_all}" == "N" ]; then
-  echo "Ok"
-else
-  echo "Invalid Response"
-  exit 1
+# AMIs made by AWS Backup are never candidates. The new name leaves room for
+# the "-encrypted" suffix within the 128 character limit.
+if ! candidates=$(printf '%s' "$images_json" | jq -c '
+  .Images[]
+  | select(([.Tags[]?.Key] | index("aws:backup:source-resource")) | not)
+  | {id: .ImageId,
+     label: (.Name // ""),
+     newname: ((.Name // .ImageId)[0:118] + "-encrypted"),
+     tags: (.Tags // []),
+     snaps: [.BlockDeviceMappings[]?.Ebs.SnapshotId? // empty]}' 2>"$errf"); then
+  die "could not parse describe-images output: $(cat "$errf")"
 fi
 
-read -e -p "Would you like to delete your source AMIs? (y/n) " delete_em
-
-if [ "${delete_em}" == "y" ] || [ "${delete_em}" == "Y" ]; then 
-    for i in $images; do
-        source_snap=$(aws --profile ${profile_name} ec2 describe-images --image-ids ${i} --query 'Images[].BlockDeviceMappings[].Ebs[].SnapshotId' |jq -r '.[]')
-        aws --profile "${profile_name}" ec2 deregister-image --image-id "${i}"
-        echo "You will need to delete the source snapshot(s)"
-        echo "${source_snap}"
-    done
-elif [ "${delete_em}" == "n" ] || [ "${delete_em}" == "N" ]; then
-  echo "Ok"
-  exit 1
-else
-  echo "Invalid Response"
-  exit 1
+if [ -z "$candidates" ]; then
+  log "Nothing to do."
+  exit 0
 fi
+
+count=$(printf '%s\n' "$candidates" | wc -l | tr -d ' ')
+while IFS= read -r item <&3; do
+  printf '  %s  %s\n' "$(printf '%s' "$item" | jq -r '.id')" "$(printf '%s' "$item" | jq -r '.label')" >&2
+done 3<<< "$candidates"
+log "About to create $count encrypted copies."
+if [ "$DELETE_SOURCE" = 1 ]; then log "Source resources will be deleted afterwards."; fi
+confirm "Continue?" || die "Aborted. Nothing was changed."
+
+if [ -n "$REPORT" ] && [ "$DRY_RUN" != 1 ]; then
+  : > "$REPORT" || die "cannot write report file: $REPORT"
+fi
+
+ok=0
+failed=0
+while IFS= read -r item <&3; do
+  id=$(printf '%s' "$item" | jq -r '.id')
+  newname=$(printf '%s' "$item" | jq -r '.newname')
+  tags=$(printf '%s' "$item" | jq -c '.tags' | copyable_tags_json)
+
+  if ! out=$(aws_rw ec2 copy-image --name "$newname" --source-region "$REGION_EFF" --source-image-id "$id" \
+    --encrypted --kms-key-id "$KMS_KEY" 2>"$errf"); then
+    failed=$((failed + 1))
+    log "Failed: $id: $(cat "$errf")"
+    continue
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    cat "$errf" >&2
+    continue
+  fi
+  if ! new=$(printf '%s' "$out" | jq -r '.ImageId // empty' 2>"$errf") || [ -z "$new" ]; then
+    failed=$((failed + 1))
+    log "Failed: $id: no image ID in copy-image output: $(cat "$errf")"
+    continue
+  fi
+
+  if ! aws_ro ec2 wait image-available --image-ids "$new" >/dev/null 2>"$errf"; then
+    failed=$((failed + 1))
+    log "Failed: $id: copy $new did not become available: $(cat "$errf")"
+    continue
+  fi
+  if [ "$tags" != "[]" ]; then
+    if ! aws_rw ec2 create-tags --resources "$new" --tags "$tags" >/dev/null 2>"$errf"; then
+      failed=$((failed + 1))
+      log "Failed: $id: could not tag $new: $(cat "$errf")"
+      continue
+    fi
+  fi
+  if [ -n "$REPORT" ]; then printf '%s %s\n' "$id" "$new" >> "$REPORT"; fi
+
+  # The source is only removed once its copy is available and tagged.
+  if [ "$DELETE_SOURCE" = 1 ]; then
+    if ! aws_rw ec2 deregister-image --image-id "$id" >/dev/null 2>"$errf"; then
+      failed=$((failed + 1))
+      log "Failed: $id: copied to $new but could not deregister the source: $(cat "$errf")"
+      continue
+    fi
+    item_failed=0
+    while IFS= read -r snap <&4; do
+      [ -n "$snap" ] || continue
+      if ! aws_rw ec2 delete-snapshot --snapshot-id "$snap" >/dev/null 2>"$errf"; then
+        item_failed=1
+        log "Failed: $snap: $(cat "$errf")"
+      fi
+    done 4<<< "$(printf '%s' "$item" | jq -r '.snaps[]')"
+    if [ "$item_failed" = 1 ]; then
+      failed=$((failed + 1))
+      continue
+    fi
+  fi
+  ok=$((ok + 1))
+done 3<<< "$candidates"
+
+if [ "$DRY_RUN" = 1 ]; then
+  log "Dry run: $count AMI(s) would be copied."
+  exit 0
+fi
+log "Done: $ok succeeded, $failed failed"
+[ "$failed" -eq 0 ] || exit 1
