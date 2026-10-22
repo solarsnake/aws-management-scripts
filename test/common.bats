@@ -153,3 +153,39 @@ make_tool_dir() {
   [ "$status" -eq 0 ]
   [ ! -e "$output" ]
 }
+
+# A wait fixture that reports "Max attempts exceeded" for the first $1 calls.
+timeout_wait_fixture() {
+  fixture_script ec2_wait "n=\$(cat '$BATS_TEST_TMPDIR/n' 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > '$BATS_TEST_TMPDIR/n'
+if [ \$n -le $1 ]; then echo 'Waiter SnapshotCompleted failed: Max attempts exceeded' >&2; exit 255; fi"
+}
+
+@test "aws_wait retries after Max attempts exceeded" {
+  timeout_wait_fixture 1
+  run bash -c '. "$LIB"; aws_wait snapshot-completed --snapshot-ids snap-1'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Still waiting..."* ]]
+  [ "$(call_count ec2 wait)" -eq 2 ]
+}
+
+@test "aws_wait gives up after WAIT_ROUNDS rounds" {
+  timeout_wait_fixture 100
+  run bash -c '. "$LIB"; WAIT_ROUNDS=3 aws_wait snapshot-completed --snapshot-ids snap-1'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Max attempts exceeded"* ]]
+  [ "$(call_count ec2 wait)" -eq 3 ]
+}
+
+@test "aws_wait fails at once on any other error" {
+  fixture_script ec2_wait 'echo "Waiter SnapshotCompleted failed: Waiter encountered a terminal failure state" >&2; exit 255'
+  run bash -c '. "$LIB"; aws_wait snapshot-completed --snapshot-ids snap-1'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"terminal failure state"* ]]
+  [ "$(call_count ec2 wait)" -eq 1 ]
+}
+
+@test "gp3_default_throughput is 125 up to 170 GiB and 250 above" {
+  run bash -c '. "$LIB"; gp3_default_throughput 1; gp3_default_throughput 170; gp3_default_throughput 171; gp3_default_throughput ""'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '125\n125\n250\n125')" ]
+}

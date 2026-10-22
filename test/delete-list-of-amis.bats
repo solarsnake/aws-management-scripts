@@ -79,3 +79,20 @@ S="$BATS_TEST_DIRNAME/../ec2/delete-list-of-amis.sh"
   [ "$status" -eq 1 ]
   refute_called ec2 deregister-image
 }
+
+@test "--dry-run prints the dry-run lines for each AMI and snapshot" {
+  run "$S" --dry-run --delete-snapshots --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[dry-run] aws ec2 deregister-image --image-id ami-00000001"* ]]
+  [[ "$output" == *"[dry-run] aws ec2 delete-snapshot --snapshot-id snap-0000000a"* ]]
+  [[ "$output" == *"[dry-run] aws ec2 delete-snapshot --snapshot-id snap-0000000b"* ]]
+  [[ "$output" == *"Dry run: 1 AMI(s) would be deregistered."* ]]
+  [[ "$output" != *"Done:"* ]]
+}
+
+@test "--file - without --yes or --dry-run is a usage error" {
+  run bash -c "printf 'ami-00000001\n' | '$S' --file -"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--file - reads IDs from stdin, so it needs --yes or --dry-run"* ]]
+  refute_called ec2 deregister-image
+}

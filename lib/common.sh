@@ -153,3 +153,33 @@ copyable_tags_json() {
   if [ -z "$input" ]; then input=null; fi
   printf '%s' "$input" | jq -c '(. // []) | map(select(.Key | startswith("aws:") | not))'
 }
+
+# gp3_default_throughput SIZE_GIB: 125 MiB/s up to 170 GiB, 250 above.
+gp3_default_throughput() {
+  local s=$1
+  case "$s" in '' | *[!0-9]*) s=0 ;; esac
+  if [ "$s" -gt 170 ]; then printf '250\n'; else printf '125\n'; fi
+}
+
+# aws_wait ARGS...: run "aws ec2 wait ARGS...". The CLI waiters give up after
+# about 10 minutes, so retry on "Max attempts exceeded" for up to WAIT_ROUNDS
+# rounds (default 12, about 2 hours). Any other failure returns at once.
+# Failures print the last stderr.
+aws_wait() {
+  local rounds=${WAIT_ROUNDS:-12} round=1 waiterr="" werr
+  make_temp werr
+  while :; do
+    if aws_ro ec2 wait "$@" >/dev/null 2>"$werr"; then return 0; fi
+    waiterr=$(cat "$werr")
+    case "$waiterr" in
+      *"Max attempts exceeded"*) ;;
+      *) printf '%s\n' "$waiterr" >&2; return 1 ;;
+    esac
+    if [ "$round" -ge "$rounds" ]; then
+      printf '%s\n' "$waiterr" >&2
+      return 1
+    fi
+    log "Still waiting..."
+    round=$((round + 1))
+  done
+}

@@ -55,8 +55,8 @@ fi
 
 # volume_throughput SIZE_GIB: the larger of --throughput and the size-based default.
 volume_throughput() {
-  local t=125
-  if [ "$1" -gt 170 ]; then t=250; fi
+  local t
+  t=$(gp3_default_throughput "$1")
   if [ -n "$THROUGHPUT" ] && [ "$THROUGHPUT" -gt "$t" ]; then t=$THROUGHPUT; fi
   printf '%s\n' "$t"
 }

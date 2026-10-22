@@ -75,14 +75,19 @@ confirm "Delete them?" || die "Aborted. Nothing was changed."
 ok=0
 failed=0
 for arn in $arns; do
-  if out=$(aws_rw backup delete-recovery-point \
-    --backup-vault-name "$VAULT" --recovery-point-arn "$arn" 2>&1); then
+  if aws_rw backup delete-recovery-point \
+    --backup-vault-name "$VAULT" --recovery-point-arn "$arn" >/dev/null 2>"$errf"; then
+    if [ "$DRY_RUN" = 1 ]; then cat "$errf" >&2; fi
     ok=$((ok + 1))
   else
     failed=$((failed + 1))
-    log "Failed: $arn: $out"
+    log "Failed: $arn: $(cat "$errf")"
   fi
 done
 
+if [ "$DRY_RUN" = 1 ]; then
+  log "Dry run: $count recovery point(s) would be deleted."
+  exit 0
+fi
 log "Done: $ok succeeded, $failed failed"
 [ "$failed" -eq 0 ] || exit 1

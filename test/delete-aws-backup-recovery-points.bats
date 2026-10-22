@@ -83,3 +83,12 @@ S="$BATS_TEST_DIRNAME/../aws-backup/delete-aws-backup-recovery-points.sh"
   [[ "$output" == *"error:"* ]]
   [ "$(call_count backup delete-recovery-point)" -eq 0 ]
 }
+
+@test "--dry-run prints the dry-run line for each recovery point" {
+  run "$S" --dry-run --vault v1 --before 2022-06-01
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[dry-run] aws backup delete-recovery-point --backup-vault-name v1 --recovery-point-arn arn:aws:ec2:us-east-1::snapshot/snap-1"* ]]
+  [[ "$output" == *"[dry-run] aws backup delete-recovery-point --backup-vault-name v1 --recovery-point-arn arn:aws:ec2:us-east-1::snapshot/snap-2"* ]]
+  [[ "$output" == *"Dry run: 2 recovery point(s) would be deleted."* ]]
+  [[ "$output" != *"Done:"* ]]
+}

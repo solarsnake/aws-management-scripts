@@ -61,7 +61,7 @@ if ! vol_json=$(aws_ro ec2 describe-volumes --volume-ids "$VOLUME_ID" 2>"$errf")
 fi
 if ! info=$(printf '%s' "$vol_json" | jq -c '.Volumes[0] | select(. != null)
   | {state: .State, encrypted: (.Encrypted // false), type: .VolumeType, iops: .Iops,
-     throughput: .Throughput, az: .AvailabilityZone, tags: (.Tags // [])}' 2>"$errf") || [ -z "$info" ]; then
+     throughput: .Throughput, size: .Size, az: .AvailabilityZone, tags: (.Tags // [])}' 2>"$errf") || [ -z "$info" ]; then
   if [ -s "$errf" ]; then die "could not read $VOLUME_ID from describe-volumes output: $(cat "$errf")"; fi
   die "$VOLUME_ID was not found in the describe-volumes output"
 fi
@@ -77,6 +77,7 @@ fi
 src_type=$(field '.type')
 src_iops=$(field '.iops // empty')
 src_throughput=$(field '.throughput // empty')
+src_size=$(field '.size // 0')
 az=$(field '.az')
 target=${TYPE:-$src_type}
 
@@ -90,7 +91,11 @@ case "$target" in
     if [ "$src_type" = "gp3" ] && [ -n "$src_throughput" ]; then
       extra+=(--throughput "$src_throughput")
     else
-      extra+=(--throughput 125)
+      src_throughput=$(gp3_default_throughput "$src_size")
+      case "$src_type" in
+        io1 | io2) warn "$VOLUME_ID is $src_type; gp3 throughput will be $src_throughput MiB/s" ;;
+      esac
+      extra+=(--throughput "$src_throughput")
     fi
     ;;
   io1 | io2)
@@ -140,7 +145,7 @@ if ! snap=$(printf '%s' "$out" | jq -r '.SnapshotId // empty' 2>"$errf") || [ -z
   die "no snapshot ID in create-snapshot output: $(cat "$errf")"
 fi
 
-if ! aws_ro ec2 wait snapshot-completed --snapshot-ids "$snap" >/dev/null 2>"$errf"; then
+if ! aws_wait snapshot-completed --snapshot-ids "$snap" >/dev/null 2>"$errf"; then
   fail_after_snapshot "snapshot $snap did not complete: $(cat "$errf")"
 fi
 if ! out=$(aws_rw ec2 create-volume --availability-zone "$az" --snapshot-id "$snap" --encrypted \
@@ -151,7 +156,7 @@ fi
 if ! new=$(printf '%s' "$out" | jq -r '.VolumeId // empty' 2>"$errf") || [ -z "$new" ]; then
   fail_after_snapshot "no volume ID in create-volume output, so a volume may have been created; check for a volume tagged encrypted-copy-of=$VOLUME_ID: $(cat "$errf")"
 fi
-if ! aws_ro ec2 wait volume-available --volume-ids "$new" >/dev/null 2>"$errf"; then
+if ! aws_wait volume-available --volume-ids "$new" >/dev/null 2>"$errf"; then
   fail_after_snapshot "new volume $new did not become available: $(cat "$errf")"
 fi
 

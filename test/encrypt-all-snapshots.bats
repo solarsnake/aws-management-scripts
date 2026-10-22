@@ -144,3 +144,16 @@ snap-0000000b snap-0000ffff" ]
   [[ "$output" != *"[y/N]"* ]]
   refute_called ec2 copy-snapshot
 }
+
+@test "AMI lookup includes disabled AMIs" {
+  run "$S" --yes --kms-key alias/k
+  [ "$status" -eq 0 ]
+  assert_called ec2 describe-images --owners\ self --include-disabled
+}
+
+@test "malformed describe-images output fails closed" {
+  fixture ec2_describe-images '{}'
+  run "$S" --yes --kms-key alias/k
+  [ "$status" -eq 1 ]
+  refute_called ec2 copy-snapshot
+}

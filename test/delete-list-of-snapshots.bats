@@ -70,3 +70,20 @@ mkfile() { printf '%b' "$1" > "$BATS_TEST_TMPDIR/ids.txt"; }
   [[ "$output" != *"[y/N]"* ]]
   [ "$(call_count ec2 delete-snapshot)" -eq 0 ]
 }
+
+@test "--dry-run prints the dry-run line for each snapshot" {
+  mkfile 'snap-00000001\nsnap-00000002\n'
+  run "$S" --dry-run --file "$BATS_TEST_TMPDIR/ids.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[dry-run] aws ec2 delete-snapshot --snapshot-id snap-00000001"* ]]
+  [[ "$output" == *"[dry-run] aws ec2 delete-snapshot --snapshot-id snap-00000002"* ]]
+  [[ "$output" == *"Dry run: 2 snapshot(s) would be deleted."* ]]
+  [[ "$output" != *"Done:"* ]]
+}
+
+@test "--file - without --yes or --dry-run is a usage error" {
+  run bash -c "printf 'snap-00000001\n' | '$S' --file -"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--file - reads IDs from stdin, so it needs --yes or --dry-run"* ]]
+  [ "$(call_count ec2 delete-snapshot)" -eq 0 ]
+}

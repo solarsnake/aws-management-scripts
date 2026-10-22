@@ -35,6 +35,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FILE" ] || usage_error "--file is required"
+if [ "$FILE" = "-" ] && [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  usage_error "--file - reads IDs from stdin, so it needs --yes or --dry-run"
+fi
 
 # Validate the whole list before making any AWS call.
 ids=$(read_id_list "$FILE" '^ami-[0-9a-f]{8,17}$')
@@ -70,21 +73,22 @@ for id in $ids; do
     continue
   fi
 
-  if ! out=$(aws_rw ec2 deregister-image --image-id "$id" 2>&1); then
+  if ! aws_rw ec2 deregister-image --image-id "$id" >/dev/null 2>"$errf"; then
     failed=$((failed + 1))
-    log "Failed: $id: $out"
+    log "Failed: $id: $(cat "$errf")"
     continue
   fi
+  if [ "$DRY_RUN" = 1 ]; then cat "$errf" >&2; fi
 
   item_failed=0
   if [ -n "$snaps" ]; then
     if [ "$DELETE_SNAPSHOTS" = 1 ]; then
       for snap in $snaps; do
-        if out=$(aws_rw ec2 delete-snapshot --snapshot-id "$snap" 2>&1); then
-          :
+        if aws_rw ec2 delete-snapshot --snapshot-id "$snap" >/dev/null 2>"$errf"; then
+          if [ "$DRY_RUN" = 1 ]; then cat "$errf" >&2; fi
         else
           item_failed=1
-          log "Failed: $snap: $out"
+          log "Failed: $snap: $(cat "$errf")"
         fi
       done
     else
@@ -94,5 +98,9 @@ for id in $ids; do
   if [ "$item_failed" = 1 ]; then failed=$((failed + 1)); else ok=$((ok + 1)); fi
 done
 
+if [ "$DRY_RUN" = 1 ]; then
+  log "Dry run: $count AMI(s) would be deregistered."
+  exit 0
+fi
 log "Done: $ok succeeded, $failed failed"
 [ "$failed" -eq 0 ] || exit 1

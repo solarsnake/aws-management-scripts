@@ -19,7 +19,7 @@ jobs:
 
       - name: Install bats and shellcheck (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y bats shellcheck
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck bsdextrautils
 
       - name: Install bats and shellcheck (macOS)
         if: runner.os == 'macOS'

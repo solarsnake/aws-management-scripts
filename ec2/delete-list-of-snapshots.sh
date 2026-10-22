@@ -32,6 +32,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FILE" ] || usage_error "--file is required"
+if [ "$FILE" = "-" ] && [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  usage_error "--file - reads IDs from stdin, so it needs --yes or --dry-run"
+fi
 
 # Validate the whole list before making any AWS call.
 ids=$(read_id_list "$FILE" '^snap-[0-9a-f]{8,17}$')
@@ -47,16 +50,23 @@ count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
 log "About to delete $count snapshot(s)."
 confirm "Delete them?" || die "Aborted. Nothing was changed."
 
+errf=""
+make_temp errf
 ok=0
 failed=0
 for id in $ids; do
-  if out=$(aws_rw ec2 delete-snapshot --snapshot-id "$id" 2>&1); then
+  if aws_rw ec2 delete-snapshot --snapshot-id "$id" >/dev/null 2>"$errf"; then
+    if [ "$DRY_RUN" = 1 ]; then cat "$errf" >&2; fi
     ok=$((ok + 1))
   else
     failed=$((failed + 1))
-    log "Failed: $id: $out"
+    log "Failed: $id: $(cat "$errf")"
   fi
 done
 
+if [ "$DRY_RUN" = 1 ]; then
+  log "Dry run: $count snapshot(s) would be deleted."
+  exit 0
+fi
 log "Done: $ok succeeded, $failed failed"
 [ "$failed" -eq 0 ] || exit 1

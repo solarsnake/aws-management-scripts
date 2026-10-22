@@ -106,7 +106,7 @@ while IFS= read -r item <&3; do
     continue
   fi
 
-  if ! aws_ro ec2 wait image-available --image-ids "$new" >/dev/null 2>"$errf"; then
+  if ! aws_wait image-available --image-ids "$new" >/dev/null 2>"$errf"; then
     failed=$((failed + 1))
     log "Failed: $id: copy $new did not become available: $(cat "$errf")"
     continue

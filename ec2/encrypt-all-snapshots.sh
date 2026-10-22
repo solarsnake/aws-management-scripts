@@ -50,10 +50,10 @@ make_temp errf
 if ! snaps_json=$(aws_ro ec2 describe-snapshots --owner-ids self --filters Name=encrypted,Values=false 2>"$errf"); then
   die "could not list snapshots: $(cat "$errf")"
 fi
-if ! images_json=$(aws_ro ec2 describe-images --owners self 2>"$errf"); then
+if ! images_json=$(aws_ro ec2 describe-images --owners self --include-disabled 2>"$errf"); then
   die "could not list AMIs: $(cat "$errf")"
 fi
-if ! backed=$(printf '%s' "$images_json" | jq -c '[.Images[]?.BlockDeviceMappings[]?.Ebs.SnapshotId? // empty]' 2>"$errf"); then
+if ! backed=$(printf '%s' "$images_json" | jq -c '[.Images[].BlockDeviceMappings[]?.Ebs.SnapshotId? // empty]' 2>"$errf"); then
   die "could not parse describe-images output: $(cat "$errf")"
 fi
 
@@ -111,7 +111,7 @@ while IFS= read -r item <&3; do
     continue
   fi
 
-  if ! aws_ro ec2 wait snapshot-completed --snapshot-ids "$new" >/dev/null 2>"$errf"; then
+  if ! aws_wait snapshot-completed --snapshot-ids "$new" >/dev/null 2>"$errf"; then
     failed=$((failed + 1))
     log "Failed: $id: copy $new did not complete: $(cat "$errf")"
     continue

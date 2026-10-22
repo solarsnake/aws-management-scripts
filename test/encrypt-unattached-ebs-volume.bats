@@ -250,3 +250,24 @@ create_line() { grep '^ec2 create-volume' "$AWS_STUB_LOG"; }
   [[ "$output" == *"error:"*"no provisioned IOPS"* ]]
   refute_called ec2 create-snapshot
 }
+
+@test "--type gp3 from a 500 GiB source gets 250 throughput" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","State":"available","Encrypted":false,"VolumeType":"gp2","Size":500,"AvailabilityZone":"us-east-1a"}]}'
+  run "$S" --yes --volume-id $V --kms-key alias/k --type gp3
+  [ "$status" -eq 0 ]
+  assert_called ec2 create-volume --volume-type\ gp3 --iops\ 3000 --throughput\ 250
+}
+
+@test "--type gp3 from a 100 GiB source gets 125 throughput" {
+  run "$S" --yes --volume-id $V --kms-key alias/k --type gp3
+  [ "$status" -eq 0 ]
+  assert_called ec2 create-volume --volume-type\ gp3 --throughput\ 125
+}
+
+@test "--type gp3 from io1 warns about the throughput" {
+  fixture ec2_describe-volumes '{"Volumes":[{"VolumeId":"vol-0000000a","State":"available","Encrypted":false,"VolumeType":"io1","Size":500,"Iops":9000,"AvailabilityZone":"us-east-1a"}]}'
+  run "$S" --yes --volume-id $V --kms-key alias/k --type gp3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: $V is io1; gp3 throughput will be 250 MiB/s"* ]]
+  assert_called ec2 create-volume --volume-type\ gp3 --iops\ 9000 --throughput\ 250
+}
